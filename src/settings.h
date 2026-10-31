@@ -7,19 +7,29 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace Settings
 {
-	inline constexpr auto kIniPath = ".\\Data\\SKSE\\Plugins\\XpOnIngredientPickup.ini";
+	inline constexpr auto kIniPath = ".\\Data\\SKSE\\Plugins\\XPOnIngredientHarvest.ini";
 
 	// Every skill in this list receives xpPerHarvest on each harvest.
 	inline std::vector<RE::ActorValue> skills{ RE::ActorValue::kAlchemy };
 	inline float                       xpPerHarvest{ 50.0f };
 	inline bool                        debugLogActivations{ false };
+
+	// Critter overrides from the INI, all lowercase.
+	// Include: { activator name, ingredient name } pairs that automatic name matching misses.
+	// Exclude: activator names to ignore even when name matching picks them up.
+	inline std::vector<std::pair<std::string, std::string>> critterIncludes;
+	inline std::unordered_set<std::string>                  critterExcludes;
+
 
 	inline std::string Trim(std::string a_str)
 	{
@@ -99,6 +109,117 @@ namespace Settings
 		return result;
 	}
 
+	inline std::string Lower(std::string a_str)
+	{
+		std::transform(a_str.begin(), a_str.end(), a_str.begin(),
+			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return a_str;
+	}
+
+	// Splits "A, B, C" into trimmed, lowercased, non-empty tokens.
+	inline std::vector<std::string> SplitList(const std::string& a_list)
+	{
+		std::vector<std::string> result;
+		std::size_t			  start = 0;
+
+		while (start <= a_list.size()) {
+			auto end = a_list.find(',', start);
+			if (end == std::string::npos) {
+				end = a_list.size();
+			}
+
+			auto token = Lower(Trim(a_list.substr(start, end - start)));
+			if (!token.empty()) {
+				result.push_back(std::move(token));
+			}
+
+			start = end + 1;
+		}
+
+		return result;
+	}
+
+	inline constexpr std::string_view kIncludeBlock =
+		"[CritterInclude]\n"
+		"; Critters that automatic name matching misses, one per line:  Activator name=Ingredient name\n"
+		"; Use the in-game names (case-insensitive). Add a line per critter, e.g. a modded one.\n"
+		"Monarch Butterfly=Butterfly Wing\n";
+
+	inline constexpr std::string_view kExcludeBlock =
+		"[CritterExclude]\n"
+		"; Activator names to ignore even if automatic name matching picks them up (false positives).\n"
+		"; Comma-separated, case-insensitive.\n"
+		"Names=Fire, Vampire, Spawn, Shade, Root\n";
+
+	// INIs created by older versions lack the critter sections; add whichever are missing
+	// without touching anything the user has already edited.
+	inline void AppendMissingCritterSections()
+	{
+		std::string content;
+		{
+			std::ifstream in(kIniPath);
+			if (!in) {
+				return;
+			}
+			content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+		}
+
+		std::string toAppend;
+		if (content.find("[CritterInclude]") == std::string::npos) {
+			toAppend += "\n";
+			toAppend += kIncludeBlock;
+		}
+		if (content.find("[CritterExclude]") == std::string::npos) {
+			toAppend += "\n";
+			toAppend += kExcludeBlock;
+		}
+
+		if (!toAppend.empty()) {
+			std::ofstream out(kIniPath, std::ios::app);
+			if (out) {
+				out << toAppend;
+				SKSE::log::info("Added missing critter sections to INI");
+			}
+		}
+	}
+
+	inline void LoadCritterOverrides()
+	{
+		critterIncludes.clear();
+		critterExcludes.clear();
+
+		// [CritterInclude]: every "Activator=Ingredient" line.
+		std::vector<char> section(8192, '\0');
+		GetPrivateProfileSectionA("CritterInclude", section.data(), static_cast<DWORD>(section.size()), kIniPath);
+		for (const char* p = section.data(); *p;) {
+			const std::string line(p);
+			p += line.size() + 1;
+
+			if (line.front() == ';' || line.front() == '#') {
+				continue;
+			}
+			const auto eq = line.find('=');
+			if (eq == std::string::npos) {
+				continue;
+			}
+
+			auto activator = Lower(Trim(line.substr(0, eq)));
+			auto ingredient = Lower(Trim(line.substr(eq + 1)));
+			if (!activator.empty() && !ingredient.empty()) {
+				critterIncludes.emplace_back(std::move(activator), std::move(ingredient));
+			}
+		}
+
+		// [CritterExclude]: Names=A, B, C
+		char names[2048]{};
+		GetPrivateProfileStringA("CritterExclude", "Names", "", names, sizeof(names), kIniPath);
+		for (auto& name : SplitList(names)) {
+			critterExcludes.insert(std::move(name));
+		}
+
+		SKSE::log::info("Critter overrides: {} include(s), {} exclude(s)", critterIncludes.size(), critterExcludes.size());
+	}
+
 	inline void WriteDefaultIni()
 	{
 		const std::filesystem::path path{ kIniPath };
@@ -124,7 +245,9 @@ namespace Settings
 			"XPPerHarvest=50.0\n"
 			"\n"
 			"; 1 = log the record type of everything the player activates (for troubleshooting)\n"
-			"DebugLogActivations=0\n";
+			"DebugLogActivations=0\n"
+			"\n";
+		out << kIncludeBlock << "\n" << kExcludeBlock;
 
 		SKSE::log::info("Created default INI at {}", path.string());
 	}
@@ -133,6 +256,9 @@ namespace Settings
 	{
 		if (!std::filesystem::exists(kIniPath)) {
 			WriteDefaultIni();
+		}
+		else {
+			AppendMissingCritterSections();
 		}
 
 		char buf[256]{};
@@ -144,15 +270,17 @@ namespace Settings
 			skills = { RE::ActorValue::kAlchemy };
 		}
 
-		GetPrivateProfileStringA("General", "XPPerHarvest", "5.0", buf, sizeof(buf), kIniPath);
+		GetPrivateProfileStringA("General", "XPPerHarvest", "50.0", buf, sizeof(buf), kIniPath);
 		try {
 			xpPerHarvest = std::stof(buf);
 		}
 		catch (...) {
-			xpPerHarvest = 5.0f;
+			xpPerHarvest = 50.0f;
 		}
 
 		debugLogActivations = GetPrivateProfileIntA("General", "DebugLogActivations", 0, kIniPath) != 0;
+
+		LoadCritterOverrides();
 
 		SKSE::log::info("Settings loaded: {} skill(s), xpPerHarvest={}, debugLogActivations={}", skills.size(),
 			xpPerHarvest, debugLogActivations);

@@ -3,9 +3,11 @@
 #include "settings.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
@@ -119,6 +121,17 @@ namespace Hooks
 			return a_ingredient.size() == a_critter.size() || a_ingredient[a_critter.size()] == ' ';
 		}
 
+		// Activator/ingredient pairs from the INI's [CritterInclude] section (both lowercase).
+		bool IsIncluded(const std::string& a_critter, const std::string& a_ingredient)
+		{
+			for (const auto& [critter, ingredient] : Settings::critterIncludes) {
+				if (critter == a_critter && ingredient == a_ingredient) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		// Base form IDs of activators that are harvestable critters.
 		std::unordered_set<RE::FormID> g_critterBases;
 
@@ -144,14 +157,29 @@ namespace Hooks
 				}
 
 				const auto name = ToLower(activator->GetName());
+
+				// Find the ingredient this activator yields: automatic name match or INI include.
+				const std::string* matched = nullptr;
 				for (const auto& ingredientName : ingredientNames) {
-					if (NameMatches(name, ingredientName)) {
-						g_critterBases.insert(activator->GetFormID());
-						SKSE::log::info("Critter map: {:08X} '{}' -> ingredient '{}'", activator->GetFormID(),
-							activator->GetName(), ingredientName);
+					if (NameMatches(name, ingredientName) || IsIncluded(name, ingredientName)) {
+						matched = &ingredientName;
 						break;
 					}
 				}
+				if (!matched) {
+					continue;
+				}
+
+				// INI [CritterExclude] wins over everything else.
+				if (Settings::critterExcludes.contains(name)) {
+					SKSE::log::info("Critter map: {:08X} '{}' excluded by INI", activator->GetFormID(),
+						activator->GetName());
+					continue;
+				}
+
+				g_critterBases.insert(activator->GetFormID());
+				SKSE::log::info("Critter map: {:08X} '{}' -> ingredient '{}'", activator->GetFormID(),
+					activator->GetName(), *matched);
 			}
 
 			SKSE::log::info("Critter map built: {} activator(s)", g_critterBases.size());
