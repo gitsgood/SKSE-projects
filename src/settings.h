@@ -19,6 +19,7 @@ namespace Settings
 	// Every skill in this list receives xpPerHarvest on each harvest.
 	inline std::vector<RE::ActorValue> skills{ RE::ActorValue::kAlchemy };
 	inline float                       xpPerHarvest{ 50.0f };
+	inline bool                        debugLogActivations{ false };
 
 	inline std::string Trim(std::string a_str)
 	{
@@ -120,7 +121,10 @@ namespace Settings
 			"Skills=Alchemy\n"
 			"\n"
 			"; Skill XP awarded to EACH listed skill every time the player harvests an ingredient plant\n"
-			"XPPerHarvest=50.0\n";
+			"XPPerHarvest=50.0\n"
+			"\n"
+			"; 1 = log the record type of everything the player activates (for troubleshooting)\n"
+			"DebugLogActivations=0\n";
 
 		SKSE::log::info("Created default INI at {}", path.string());
 	}
@@ -148,6 +152,9 @@ namespace Settings
 			xpPerHarvest = 5.0f;
 		}
 
-		SKSE::log::info("Settings loaded: {} skill(s), xpPerHarvest={}", skills.size(), xpPerHarvest);
+		debugLogActivations = GetPrivateProfileIntA("General", "DebugLogActivations", 0, kIniPath) != 0;
+
+		SKSE::log::info("Settings loaded: {} skill(s), xpPerHarvest={}, debugLogActivations={}", skills.size(),
+			xpPerHarvest, debugLogActivations);
 	}
 }

@@ -2,7 +2,10 @@
 
 namespace Hooks
 {
-	// Patches TESFlora::Activate and TESObjectTREE::Activate so we can see successful
-	// in-world harvests by the player. Call once, after SKSE::Init.
+	// Patches TESFlora::Activate and TESObjectTREE::Activate, and builds the critter lookup.
+	// Call once on kDataLoaded, after Settings::Load().
 	void Install();
+
+	// Clears per-session critter bookkeeping. Call on kPreLoadGame / kNewGame.
+	void ResetState();
 }

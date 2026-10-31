@@ -3,12 +3,10 @@
 #include "hook.h"
 #include "settings.h"
 
-
 void OnDataLoaded()
 {
 	Settings::Load();
 	Hooks::Install();
-
 }
 
 void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
@@ -20,24 +18,24 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 	case SKSE::MessagingInterface::kPostLoad:
 		break;
 	case SKSE::MessagingInterface::kPreLoadGame:
+		Hooks::ResetState();
 		break;
 	case SKSE::MessagingInterface::kPostLoadGame:
-        break;
+		break;
 	case SKSE::MessagingInterface::kNewGame:
+		Hooks::ResetState();
 		break;
 	}
 }
 
-SKSEPluginLoad(const SKSE::LoadInterface *skse) {
-    SKSE::Init(skse);
+SKSEPluginLoad(const SKSE::LoadInterface* skse) {
+	SKSE::Init(skse);
 	SetupLog();
 
-
-    auto messaging = SKSE::GetMessagingInterface();
+	auto messaging = SKSE::GetMessagingInterface();
 	if (!messaging->RegisterListener("SKSE", MessageHandler)) {
 		return false;
 	}
 
-	
-    return true;
+	return true;
 }
